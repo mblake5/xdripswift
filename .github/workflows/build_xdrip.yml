@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    name: Build Raw Installer
+    name: Build Unsigned Installer
     runs-on: macos-14
     permissions:
       contents: write
@@ -13,42 +13,38 @@ jobs:
       - name: Select Xcode version
         run: "sudo xcode-select --switch /Applications/Xcode_15.4.app/Contents/Developer"
       
-      - name: Checkout Repo for building
+      - name: Checkout Repo Code
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # Patch Fastlane Match to not print tables
-      - name: Patch Match Tables
-        run: find /usr/local/lib/ruby/gems -name table_printer.rb | xargs sed -i "" "/puts(Terminal::Table.new(params))/d" || true
-      
-      # Install project dependencies
-      - name: Install Project Dependencies
-        run: bundle install
-      
-      # Sync the GitHub runner clock
-      - name: Sync clock
-        run: sudo sntp -sS ://windows.com
-      
-      # Build Xdrip4iOS local compiler archive
-      - name: Fastlane Build & Archive
-        run: bundle exec fastlane build_xdrip4ios
-        env:
-          TEAMID: ${{ secrets.TEAMID }}
-          GH_PAT: ${{ secrets.GH_PAT }}
-          FASTLANE_KEY_ID: ${{ secrets.FASTLANE_KEY_ID }}
-          FASTLANE_ISSUER_ID: ${{ secrets.FASTLANE_ISSUER_ID }}
-          FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
-          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
-      
-      # Extract and Upload Build artifacts
+      - name: Force Clean CocoaPods Dependencies
+        run: |
+          pod repo update
+          pod install
+
+      - name: Compile Unsigned Xcode Archive
+        run: |
+          xcodebuild archive \
+            -workspace xDrip4iOS.xcworkspace \
+            -scheme xDrip4iOS \
+            -configuration Release \
+            -archivePath build/xDrip4iOS.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
+
+      - name: Structure Binary Bundle into IPA Package
+        run: |
+          mkdir -p build/Payload
+          cp -r build/xDrip4iOS.xcarchive/Products/Applications/xDrip4iOS.app build/Payload/
+          cd build
+          zip -r xDrip4iOS-Unsigned.ipa Payload
+
       - name: Upload Raw IPA file to Windows PC
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: xDrip4iOS-Sideload-Artifact
-          path: |
-            **/*.ipa
-            ios/packages/*.ipa
-            artifacts
-            buildlog
+          path: build/xDrip4iOS-Unsigned.ipa
